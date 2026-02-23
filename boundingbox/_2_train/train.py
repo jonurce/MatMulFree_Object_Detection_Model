@@ -23,7 +23,7 @@ import os
 os.environ["LIBPNG_NO_WARNINGS"] = "1"
 
 ##################### YOLO-style loss (simplified for single-class) #####################
-def yolo_loss(pred, target):
+def yolo_loss(pred, target, w_box, w_obj, w_cls, gamma_obj, gamma_cls, alpha_obj, alpha_cls, sigma):
     """
     YOLO-style loss for single-class, single-object-per-image detection.
     
@@ -124,7 +124,7 @@ def yolo_loss(pred, target):
     distance = torch.sqrt(dx**2 + dy**2)                  # [B, gh, gw]
 
     # Gaussian weight: 1.0 at center, falls off with distance
-    sigma = 3  # smaller sigma = sharper peak, larger = broader
+    # sigma = 3  # smaller sigma = sharper peak, larger = broader
     gaussian_weight = torch.exp(-distance**2 / (2 * sigma**2))  # [B, gh, gw]
 
     # Scale down toward box edges (linear falloff from center to edge)
@@ -217,26 +217,32 @@ def yolo_loss(pred, target):
 
     # - 4.3 - Focal loss on objectness confidence
     # far_mask = distance > 4.0  # [B, gh, gw]
-    obj_loss = focal_loss(pred_obj, target_obj, gamma=5.0, alpha=0.25)
+    obj_loss = focal_loss(pred_obj, target_obj, gamma=gamma_obj, alpha=alpha_obj)
     # obj_loss[far_mask] = 0.0   # ignore very distant negatives
     # obj_loss = obj_loss.mean() * remove mean from focal_loss and apply after cls_loss
 
     # - 4.4 - Focal loss on class probability (same target as objectness for single-class)
-    cls_loss = focal_loss(pred_cls, target_cls, gamma=5.0, alpha=0.25)
+    cls_loss = focal_loss(pred_cls, target_cls, gamma=gamma_cls, alpha=alpha_cls)
 
 
 
     # ── 5. Compute final loss: weight each component ──
 
     # Total loss (average per sample in the batch)
-    total_loss = 10.0 * box_loss + 300.0 * obj_loss + 100.0 * cls_loss
+    total_loss = w_box * box_loss + w_obj * obj_loss + w_cls * cls_loss
 
     return total_loss, box_loss, obj_loss, cls_loss
 
 ##################### Focal Loss #####################
 def focal_loss(inputs, targets, gamma, alpha):
+
+    # bce: 0 for perfect prediction, inf for worst prediction
     bce = nn.BCELoss(reduction='none')(inputs, targets)
+
+    # pt: 1 for perfect prediction, 0 for worst prediction
     pt = torch.exp(-bce)
+
+    # Focal loss: modulate BCE with (1-pt)^gamma and alpha
     return (alpha * (1 - pt) ** gamma * bce).mean()
 
 ##################### Train one epoch #####################
@@ -254,7 +260,7 @@ def train_one_epoch(model, epoch, writer, loader, optimizer, criterion, device):
         
         optimizer.zero_grad()
         pred = model(event)
-        loss, box_loss, obj_loss, cls_loss = criterion(pred, bbox)
+        loss, box_loss, obj_loss, cls_loss = criterion(pred, bbox, w_box=args.w_box, w_obj=args.w_obj, w_cls=args.w_cls, gamma_obj=args.gamma_obj, gamma_cls=args.gamma_cls, alpha_obj=args.alpha_obj, alpha_cls=args.alpha_cls, sigma=args.sigma)
         loss.backward()
         optimizer.step()
         
@@ -289,7 +295,7 @@ def validate(model, loader, criterion, device):
         for rgb, event, bbox in tqdm(loader, desc="Validation"):
             event, bbox = event.to(device), bbox.to(device)
             pred = model(event)
-            loss, box_loss, obj_loss, cls_loss = criterion(pred, bbox)
+            loss, box_loss, obj_loss, cls_loss = criterion(pred, bbox, w_box=args.w_box, w_obj=args.w_obj, w_cls=args.w_cls, gamma_obj=args.gamma_obj, gamma_cls=args.gamma_cls, alpha_obj=args.alpha_obj, alpha_cls=args.alpha_cls, sigma=args.sigma)
             total_loss += loss.item()
             total_box += box_loss.item()
             total_obj += obj_loss.item()
@@ -305,7 +311,7 @@ def main(args):
     print(f"Using device: {device}")
 
     # Create model directory with sequential numbering
-    counter = 13
+    counter = args.start_count
     while True:
         model_subdir = f"{counter}"
         model_dir = os.path.join(args.save_dir, model_subdir)
@@ -318,6 +324,7 @@ def main(args):
     details_path = os.path.join(model_dir, "details.txt")
     with open(details_path, "w") as f:
         f.write(f"Bounding Box Training Run\n")
+        f.write(f"Single-class (satellite), event-only input\n")
         f.write(f"-------------------------\n")
         f.write(f"Satellite:       {args.satellite}\n")
         f.write(f"Sequence:       {args.sequence}\n")
@@ -325,13 +332,12 @@ def main(args):
         f.write(f"Batch size:      {args.batch_size}\n")
         f.write(f"Max epochs:      {args.epochs}\n")
         f.write(f"Learning rate:   {args.lr}\n")
-        f.write(f"Device:          x2 GPUs\n")
-        f.write(f"Notes:           Single-class (satellite), event-only input\n")
+        f.write(f"Device:          x{torch.cuda.device_count()} {torch.cuda.get_device_name(0)}\n")
+        f.write(f"Loss weights:    w_box={args.w_box}, w_obj={args.w_obj}, w_cls={args.w_cls}\n")
+        f.write(f"Focal loss gamma: gamma_obj={args.gamma_obj}, gamma_cls={args.gamma_cls}\n")
+        f.write(f"Focal loss alpha: alpha_obj={args.alpha_obj}, alpha_cls={args.alpha_cls}\n")
+        f.write(f"Sigma for soft targets: {args.sigma}\n")
         f.write(f"Notes: Giving more importance to prob_obj and prob_cls (ensure they don't go to 0)\n")
-        f.write(f"Notes: weight_obj_loss = 300 (Focal Loss: gamma=5.0, alpha=0.25) \n")
-        f.write(f"Notes: weight_class_loss = 100 (Focal Loss: gamma=5.0, alpha=0.25)\n")
-        f.write(f"Notes: increase sigma to 3 \n")
-        f.write(f"Results: .....\n")
 
         
 
@@ -410,18 +416,42 @@ def main(args):
             if os.path.exists(prev_path):
                 os.remove(prev_path)
 
+    with open(os.path.join(details_path, "details.txt"), "a") as f:
+        f.write(f"-------------------------\n")
+        f.write(f"Results:\n")
+        f.write(f"Final epoch: {epoch}\n")
+        f.write(f"Best val loss: {best_val_loss:.6f}\n")
+        f.write(f"Last val loss: {val_loss:.6f}\n")
+        f.write(f"Last train box loss: {train_box:.6f}\n")
+        f.write(f"Last val box loss: {val_box:.6f}\n")
+        if epochs_no_improve >= patience:
+            f.write(f"Early stopping triggered\n")
+        elif epoch >= max_epochs:
+            f.write(f"Reached max epochs\n")
+        else:
+            f.write(f"Stopped at epoch {epoch}\n")
+
     writer.close()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Event-only Bounding Box Network")
+    parser.add_argument("--start_count",   type=int,   default=18,       help="Starting count for model directory naming")
+    parser.add_argument("--save_dir",     type=str,   default="boundingbox/_2_train/runs", help="Save directory")
     parser.add_argument("--batch_size",   type=int,   default=64,       help="Batch size")
     parser.add_argument("--epochs",       type=int,   default=500,      help="Number of epochs")
     parser.add_argument("--lr",           type=float, default=3e-4,     help="Learning rate")
     parser.add_argument("--satellite",    type=str,   default="cassini", help="Satellite name")
     parser.add_argument("--sequence",     type=str,   default="1",       help="Sequence number")
     parser.add_argument("--distance",    type=str,   default="close",    help="Distance")
-    parser.add_argument("--save_dir",     type=str,   default="boundingbox/_2_train/runs", help="Save directory")
+    parser.add_argument("--w_box",        type=float, default=10.0,      help="Weight for box loss")
+    parser.add_argument("--w_obj",        type=float, default=10.0,    help="Weight for objectness loss")
+    parser.add_argument("--w_cls",        type=float, default=10.0,    help="Weight for class loss")
+    parser.add_argument("--gamma_obj",    type=float, default=1.0,     help="Focal loss gamma for objectness")
+    parser.add_argument("--alpha_obj",    type=float, default=2.0,    help="Focal loss alpha for objectness")
+    parser.add_argument("--gamma_cls",    type=float, default=1.0,     help="Focal loss gamma for class")
+    parser.add_argument("--alpha_cls",    type=float, default=2.0,    help="Focal loss alpha for class")
+    parser.add_argument("--sigma",        type=float, default=3.0,     help="Sigma for Gaussian soft targets")
     
     args = parser.parse_args()
     main(args)

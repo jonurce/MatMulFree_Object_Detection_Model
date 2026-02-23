@@ -2,5 +2,4 @@ _downloads/
 _dataset/
 venv/
 __pycache__/
-*.0
 *.pth
