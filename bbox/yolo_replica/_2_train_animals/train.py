@@ -29,8 +29,8 @@ scaler = GradScaler()
 import numpy as np
 
 
-from bbox._1_dataset.dataset import SatelliteBBDataset
-from model import EventBBNet
+from bbox._1_dataset_animals.dataset import AnimalsBBDataset
+from model import RGBbboxNet
 
 
 # Global variables to access last known values (update them in loop)
@@ -316,7 +316,6 @@ def focal_loss(inputs, targets, gamma):
 
     return torch.mean(focal_loss)  # scalar: avg over all components
 
-
 ##################### Train one epoch #####################
 def train_one_epoch(model, epoch, writer, loader, optimizer, criterion, device):
     model.train()
@@ -328,14 +327,25 @@ def train_one_epoch(model, epoch, writer, loader, optimizer, criterion, device):
     num_batches = len(loader)
     running_loss = 0.0
 
-    for batch_idx, (rgb, event, bbox, class_id) in enumerate(tqdm(loader, desc="Training")):
-        event, bbox, class_id = event.to(device), bbox.to(device), class_id.to(device)
+    for batch_idx, (rgb, target) in enumerate(tqdm(loader, desc="Training")):
+        rgb = rgb.to(device)
+
+        # Extract bbox and class_id for each image
+        bboxes = []
+        class_ids = []
+        for t in target:  # loop over batch
+            if t.numel() == 0:
+                bboxes.append(torch.empty((0, 4), device=device))
+                class_ids.append(torch.empty((0,), dtype=torch.long, device=device))
+            else:
+                bboxes.append(t[:, :4].to(device))      # [N, 4] cx,cy,w,h
+                class_ids.append(t[:, 4].long().to(device))  # [N] class indices
         
         optimizer.zero_grad()
         # with autocast(device_type='cuda'):
-        pred = model(event)
+        pred = model(rgb)
         
-        loss, box_loss, obj_loss, cls_loss, class_acc = criterion(pred, bbox, class_id, w_box=args.w_box, w_obj=args.w_obj, w_cls=args.w_cls, gamma_obj=args.gamma_obj, gamma_cls=args.gamma_cls, sigma=args.sigma)
+        loss, box_loss, obj_loss, cls_loss, class_acc = criterion(pred, bboxes, class_ids, w_box=args.w_box, w_obj=args.w_obj, w_cls=args.w_cls, gamma_obj=args.gamma_obj, gamma_cls=args.gamma_cls, sigma=args.sigma)
         
         # Backward and step
         loss.backward()
@@ -393,10 +403,23 @@ def validate(model, epoch, writer, loader, criterion, device):
 
 
     with torch.no_grad():
-        for batch_idx, (rgb, event, bbox, class_id) in enumerate(tqdm(loader, desc="Validation")):
-            event, bbox, class_id = event.to(device), bbox.to(device), class_id.to(device)
-            pred = model(event)
-            loss, box_loss, obj_loss, cls_loss, class_acc = criterion(pred, bbox, class_id, w_box=args.w_box, w_obj=args.w_obj, w_cls=args.w_cls, gamma_obj=args.gamma_obj, gamma_cls=args.gamma_cls, sigma=args.sigma)
+        for batch_idx, (rgb, target) in enumerate(tqdm(loader, desc="Validation")):
+            
+            rgb = rgb.to(device)
+
+            # Extract bbox and class_id for each image
+            bboxes = []
+            class_ids = []
+            for t in target:  # loop over batch
+                if t.numel() == 0:
+                    bboxes.append(torch.empty((0, 4), device=device))
+                    class_ids.append(torch.empty((0,), dtype=torch.long, device=device))
+                else:
+                    bboxes.append(t[:, :4].to(device))      # [N, 4] cx,cy,w,h
+                    class_ids.append(t[:, 4].long().to(device))  # [N] class indices
+            
+            pred = model(rgb)
+            loss, box_loss, obj_loss, cls_loss, class_acc = criterion(pred, bboxes, bboxes, w_box=args.w_box, w_obj=args.w_obj, w_cls=args.w_cls, gamma_obj=args.gamma_obj, gamma_cls=args.gamma_cls, sigma=args.sigma)
             total_loss += loss.item()
             total_box += box_loss.item()
             total_obj += obj_loss.item()
@@ -472,7 +495,7 @@ def main(args):
     print(f"Using device: {device}")
 
     # Model
-    model = EventBBNet().to(device)
+    model = RGBbboxNet().to(device)
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -593,15 +616,11 @@ def main(args):
         print(f"Resumed from epoch {start_epoch}, best val loss {best_val_loss:.6f}")
 
     # Train Dataset & Loader
-    train_ds_full = SatelliteBBDataset(split='train')
-    np.random.seed(42)  # for reproducibility (optional)
-    num_samples = min(10000, len(train_ds_full)) # 10K -> around 25% of train data
-    random_indices = np.random.choice(len(train_ds_full), size=num_samples, replace=False)
-    train_ds = Subset(train_ds_full, random_indices)
+    train_ds = AnimalsBBDataset(split='train')
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
 
     # Val Dataset & Loader
-    val_ds   = SatelliteBBDataset(split='val')
+    val_ds   = AnimalsBBDataset(split='valid')
     val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
     # Training loop
@@ -723,12 +742,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Event-only Bounding Box Network")
 
     # Save directory
-    parser.add_argument("--start_count",   type=int,   default=19,       help="Starting count for model directory naming")
+    parser.add_argument("--start_count",   type=int,   default=0,       help="Starting count for model directory naming")
     parser.add_argument("--save_dir",     type=str,   default="bbox/yolo_replica/_2_train/runs", help="Save directory")
 
     # Resume directory: resume_path or None
-    resume_path = "bbox/yolo_replica/_2_train/runs/21/best_model.pth"
-    parser.add_argument("--resume", type=str, default=resume_path, help="Path to checkpoint to resume from")
+    resume_path = "bbox/yolo_replica/_2_train_animals/runs/21/best_model.pth"
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
 
     # Training parameters
     parser.add_argument("--batch_size",   type=int,   default=128,       help="Batch size")
