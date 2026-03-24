@@ -248,7 +248,7 @@ def main(args):
             # model = torch.compile(model)
             optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
             # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=25, min_lr=args.lr/20)
-            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0.1 * args.lr)
+            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0.6 * args.lr)
             # scheduler = OneCycleLR(optimizer, max_lr=args.lr * 1.1, total_steps=len(train_loader) * args.epochs,
             #     pct_start=0.03, anneal_strategy='cos', div_factor=2, final_div_factor=1e5)
 
@@ -309,7 +309,7 @@ def main(args):
             optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
             
             # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=25, min_lr=args.lr/20)
-            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0.1 * args.lr)
+            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0.6 * args.lr)
             # scheduler = OneCycleLR(optimizer, max_lr=args.lr * 1.1, total_steps=len(train_loader) * args.epochs,
             #     pct_start=0.03, anneal_strategy='cos', div_factor=2, final_div_factor=1e5)
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -431,7 +431,7 @@ if __name__ == "__main__":
     # Training parameters
     parser.add_argument("--batch_size", type=int, default=1024)
     parser.add_argument("--epochs", type=int, default=1000)
-    parser.add_argument("--lr", type=float, default=4e-3) # higher lr for mmf
+    parser.add_argument("--lr", type=float, default=3e-3) # higher lr for mmf
     parser.add_argument("--wd", type=float, default=0) # lower for mmf
     args = parser.parse_args()
     main(args)
