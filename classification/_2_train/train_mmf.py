@@ -260,9 +260,18 @@ def main(args):
             # model = torch.compile(model)
             optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
             # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=25, min_lr=args.lr/20)
-            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr*0)
+            # scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr*0)
             # scheduler = OneCycleLR(optimizer, max_lr=args.lr * 1.1, total_steps=len(train_loader) * args.epochs,
             #     pct_start=0.03, anneal_strategy='cos', div_factor=2, final_div_factor=1e5)
+
+            scheduler1 = CosineAnnealingLR(optimizer, T_max=args.epochs//3, eta_min=args.lr*0.5)
+            scheduler2 = CosineAnnealingLR(optimizer, T_max=5, eta_min=args.lr*0.25)
+            scheduler3 = CosineAnnealingLR(optimizer, T_max=args.epochs*2//3, eta_min=args.lr*0)
+            scheduler = SequentialLR(
+                optimizer,
+                schedulers=[scheduler1, scheduler2, scheduler3],
+                milestones=[args.epochs//3, args.epochs//3 + 5]
+            )
 
 
     else:
@@ -322,11 +331,20 @@ def main(args):
             optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
             
             # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=25, min_lr=args.lr/20)
-            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr*0.1)
+            # scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr*0.1)
             # scheduler = OneCycleLR(optimizer, max_lr=args.lr * 1.1, total_steps=len(train_loader) * args.epochs,
             #     pct_start=0.03, anneal_strategy='cos', div_factor=2, final_div_factor=1e5)
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+            scheduler1 = CosineAnnealingLR(optimizer, T_max=args.epochs//3, eta_min=args.lr*0.5)
+            scheduler2 = CosineAnnealingLR(optimizer, T_max=5, eta_min=args.lr*0.25)
+            scheduler3 = CosineAnnealingLR(optimizer, T_max=args.epochs*2//3, eta_min=args.lr*0)
+            scheduler = SequentialLR(
+                optimizer,
+                schedulers=[scheduler1, scheduler2, scheduler3],
+                milestones=[args.epochs//3, args.epochs//3 + 5]
+            )
 
         start_epoch = checkpoint['epoch'] + 1
         best_val_loss = checkpoint['best_val_loss']
@@ -370,9 +388,9 @@ def main(args):
         # scheduler.step(val_loss) # ReduceLROnPlateau -> needs val_loss
         scheduler.step() # CosineAnnealingLR -> empty parenthesis
 
-        if epoch == args.epochs // 2:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = param_group['lr'] / 2
+        # if epoch == args.epochs // 3 + 3:
+        #    for param_group in optimizer.param_groups:
+        #        param_group['lr'] = param_group['lr'] / 2
 
         # Early stopping
         if val_loss < best_val_loss * (1 - min_delta_pct):
@@ -447,7 +465,7 @@ if __name__ == "__main__":
 
     # Training parameters
     parser.add_argument("--batch_size", type=int, default=1024)
-    parser.add_argument("--epochs", type=int, default=800)
+    parser.add_argument("--epochs", type=int, default=1500)
     parser.add_argument("--lr", type=float, default=3e-3) # higher lr for mmf
     parser.add_argument("--wd", type=float, default=0) # lower for mmf
     args = parser.parse_args()

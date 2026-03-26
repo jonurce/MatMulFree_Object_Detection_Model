@@ -45,6 +45,7 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 # Run TensorBoard (point to your log dir – usually inside checkpoints/runs)
 tensorboard --logdir=pose/_2_train/runs --port=6006
 tensorboard --logdir=bbox/yolo_replica/_2_train/runs --port=6006
+tensorboard --logdir=classification/_2_train/runs_mmf --port=6006
 
 
 # See GPU utilization (refreshes every 500 ms)
