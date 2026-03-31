@@ -3,7 +3,7 @@
 Work in progress (March 2026)
 
 ## 1. Clone repository
-TODO: Write
+TODO: Write...
 
 
 ## 2. Install required packages
