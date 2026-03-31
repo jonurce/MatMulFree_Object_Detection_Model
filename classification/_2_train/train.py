@@ -171,7 +171,7 @@ def main(args):
     min_delta_pct = 0.00005
     best_val_loss = float('inf')
     epochs_no_improve = 0
-    start_epoch = 1
+    start_epoch = 0
 
     # Datasets
     train_ds = CIFAR10Dataset(split='train')
@@ -301,7 +301,7 @@ def main(args):
         print(f"Resumed from epoch {start_epoch}, best val loss {best_val_loss:.6f}")
 
     # Training loop
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
 
         train_loss, train_acc = train_one_epoch(model, epoch, writer, train_loader, optimizer, scheduler, criterion, device)
        

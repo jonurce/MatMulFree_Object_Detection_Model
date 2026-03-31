@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, Subset
-from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau, CosineAnnealingWarmRestarts, LambdaLR, OneCycleLR, SequentialLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau, CosineAnnealingWarmRestarts, LambdaLR, OneCycleLR, SequentialLR, ConstantLR
 from tqdm import tqdm
 import os
 import argparse
@@ -201,11 +201,10 @@ def main(args):
     criterion = nn.CrossEntropyLoss()
 
     # Early stopping for training
-    patience = 100
-    min_delta_pct = 0.00005
+    patience = 300
     best_val_loss = float('inf')
     epochs_no_improve = 0
-    start_epoch = 1
+    start_epoch = 0
 
     # Datasets
     train_ds = CIFAR10Dataset(split='train')
@@ -260,11 +259,11 @@ def main(args):
             # model = torch.compile(model)
             optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
             # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=25, min_lr=args.lr/20)
-            # scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr*0)
+            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs*2//3, eta_min=args.lr*0.001)
             # scheduler = OneCycleLR(optimizer, max_lr=args.lr * 1.1, total_steps=len(train_loader) * args.epochs,
             #     pct_start=0.03, anneal_strategy='cos', div_factor=2, final_div_factor=1e5)
 
-            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs//3, eta_min=args.lr*0.5)
+            # scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs//3, eta_min=args.lr*0.5)
             # scheduler2 = CosineAnnealingLR(optimizer, T_max=5, eta_min=args.lr*0.25)
             # scheduler3 = CosineAnnealingLR(optimizer, T_max=args.epochs*2//3, eta_min=args.lr*0)
             # scheduler = SequentialLR(
@@ -331,11 +330,11 @@ def main(args):
             optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
             
             # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=25, min_lr=args.lr/20)
-            # scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr*0.1)
+            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs*2//3, eta_min=args.lr*0.001)
             # scheduler = OneCycleLR(optimizer, max_lr=args.lr * 1.1, total_steps=len(train_loader) * args.epochs,
             #     pct_start=0.03, anneal_strategy='cos', div_factor=2, final_div_factor=1e5)
             
-            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs//3, eta_min=args.lr*0.5)
+            # scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs//3, eta_min=args.lr*0.5)
             # scheduler2 = CosineAnnealingLR(optimizer, T_max=5, eta_min=args.lr*0.25)
             # scheduler3 = CosineAnnealingLR(optimizer, T_max=args.epochs*2//3, eta_min=args.lr*0)
             # scheduler = SequentialLR(
@@ -352,7 +351,7 @@ def main(args):
         print(f"Resumed from epoch {start_epoch}, best val loss {best_val_loss:.6f}")
 
     # Training loop
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
 
         avg_zeros, avg_pos, avg_neg, avg_mean, avg_s_z = network_weights(model)
         writer.add_scalar("Weights/zero", avg_zeros, epoch)
@@ -387,10 +386,16 @@ def main(args):
 
         
         if epoch == args.epochs//3:
-            # Manually set lr to where scheduler1 left off / 2
+            # Manually set lr to half
             for param_group in optimizer.param_groups:
-                param_group['lr'] = args.lr * 0.25
-            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs*2//3, eta_min=0)
+                # param_group['lr'] = args.lr * 0.25
+                param_group['lr'] = param_group['lr'] / 2
+            # scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs*2//3, eta_min=0)
+        elif epoch == args.epochs*2//3:
+            # Manually set lr to where scheduler left off
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = args.lr * 0.001
+            scheduler = ConstantLR(optimizer, factor=1, total_iters=args.epochs//3)
         else:
             scheduler.step()
         
@@ -403,7 +408,7 @@ def main(args):
         #        param_group['lr'] = param_group['lr'] / 2
 
         # Early stopping
-        if val_loss < best_val_loss * (1 - min_delta_pct):
+        if val_loss < best_val_loss:
             best_val_loss = val_loss
             GLOBAL_BEST_VAL_LOSS = best_val_loss
             epochs_no_improve = 0
@@ -429,23 +434,23 @@ def main(args):
                 print(f"Early stopping after {epoch} epochs")
                 break
 
-        if epoch % 5 == 0:
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-                'best_val_loss': val_loss,
-                'hyperparameters': {
-                    'batch_size': args.batch_size,
-                    'epochs': args.epochs,
-                    'lr': args.lr,
-                    'wd': args.wd,
-                }
-            }, os.path.join(GLOBAL_MODEL_DIR, f"checkpoint_epoch_{epoch}.pth"))
-            prev_path = os.path.join(GLOBAL_MODEL_DIR, f"checkpoint_epoch_{epoch - 5}.pth")
-            if os.path.exists(prev_path):
-                os.remove(prev_path)
+        # Save checkpoint and delete old checkpoint every epoch
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'best_val_loss': val_loss,
+            'hyperparameters': {
+                'batch_size': args.batch_size,
+                'epochs': args.epochs,
+                'lr': args.lr,
+                'wd': args.wd,
+            }
+        }, os.path.join(GLOBAL_MODEL_DIR, f"checkpoint_epoch_{epoch}.pth"))
+        prev_path = os.path.join(GLOBAL_MODEL_DIR, f"checkpoint_epoch_{epoch - 1}.pth")
+        if os.path.exists(prev_path):
+            os.remove(prev_path)
 
     with open(os.path.join(details_path), "a") as f:
         f.write(f"-------------------------\n")
@@ -470,13 +475,13 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir",     type=str,   default="classification/_2_train/runs_mmf", help="Save directory")
 
     # Resume directory: resume_path or None
-    resume_path = "classification/_2_train/runs_mmf/23/checkpoint_epoch_460.pth"
+    resume_path = "classification/_2_train/runs_mmf/29/checkpoint_epoch_475.pth"
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
 
     # Training parameters
     parser.add_argument("--batch_size", type=int, default=1024)
     parser.add_argument("--epochs", type=int, default=1200)
-    parser.add_argument("--lr", type=float, default=3e-3) # higher lr for mmf
+    parser.add_argument("--lr", type=float, default=4e-3) # higher lr for mmf
     parser.add_argument("--wd", type=float, default=0) # lower for mmf
     args = parser.parse_args()
     main(args)
