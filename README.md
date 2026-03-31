@@ -1,6 +1,6 @@
 # Matrix Multiplication Free Object Detection Model 
 
-Work in progress (February 2026)
+Work in progress (March 2026)
 
 ## 1. Clone repository
 TODO: Write
