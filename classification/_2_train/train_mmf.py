@@ -17,7 +17,7 @@ from torch.amp import GradScaler, autocast
 scaler = GradScaler()
 
 from classification._1_dataset.dataset import CIFAR10Dataset
-from model import YOLOv1ClassifierMMF  
+from model import YOLOv1ClassifierMMFv1  
 
 GLOBAL_LAST_EPOCH = 0
 GLOBAL_BEST_VAL_LOSS = float('inf')
@@ -48,17 +48,20 @@ def train_one_epoch(model, epoch, writer, loader, optimizer, scheduler, criterio
 
         loss.backward()
 
-        # Log first layer gradient mean to TensorBoard
-        first_layer_grad_norm = None
+        # Log gradients to TensorBoard
+        global_step = epoch * num_batches + batch_idx
+        layer_idx = 0
         for name, p in model.named_parameters():
             if 'weight' in name and p.grad is not None:
-                first_layer_grad_norm = p.grad.abs().mean().item()
-                break  # only first layer
+                grad_mean = p.grad.abs().mean().item()
+                grad_max = p.grad.abs().max().item()
 
-        global_step = epoch * num_batches + batch_idx
-        if first_layer_grad_norm is not None:
-            writer.add_scalar("Gradients/first_layer_mean", first_layer_grad_norm, global_step)
-            
+                writer.add_scalar(f"Gradients/mean_abs/layer_{layer_idx:02d}", grad_mean, global_step)
+                writer.add_scalar(f"Gradients/max_abs/layer_{layer_idx:02d}", grad_max, global_step)
+
+                layer_idx += 1
+
+        
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         
@@ -193,7 +196,7 @@ def main(args):
     print(f"Using device: {device}")
 
     # Model
-    model = YOLOv1ClassifierMMF(num_classes=10).to(device)
+    model = YOLOv1ClassifierMMFv1(num_classes=10).to(device)
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -201,7 +204,7 @@ def main(args):
     criterion = nn.CrossEntropyLoss()
 
     # Early stopping for training
-    patience = 500
+    patience = args.epochs
     best_val_loss = float('inf')
     epochs_no_improve = 0
     start_epoch = 0
@@ -259,7 +262,7 @@ def main(args):
             # model = torch.compile(model)
             optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
             # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=25, min_lr=args.lr/20)
-            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr*0.001)
+            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs*2//3, eta_min=args.lr*1e-5)
             # scheduler = OneCycleLR(optimizer, max_lr=args.lr * 1.1, total_steps=len(train_loader) * args.epochs,
             #     pct_start=0.03, anneal_strategy='cos', div_factor=2, final_div_factor=1e5)
 
@@ -330,7 +333,7 @@ def main(args):
             optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
             
             # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=25, min_lr=args.lr/20)
-            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr*0.001)
+            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs*2//3, eta_min=args.lr*1e-5)
             # scheduler = OneCycleLR(optimizer, max_lr=args.lr * 1.1, total_steps=len(train_loader) * args.epochs,
             #     pct_start=0.03, anneal_strategy='cos', div_factor=2, final_div_factor=1e5)
             
@@ -385,17 +388,17 @@ def main(args):
         GLOBAL_LAST_SCHEDULER_STATE = scheduler.state_dict()
 
         
-        if epoch == args.epochs//2:
+        if epoch == args.epochs//3:
             # Manually set lr to half
             for param_group in optimizer.param_groups:
                 # param_group['lr'] = args.lr * 0.25
                 param_group['lr'] = param_group['lr'] / 2
             # scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs*2//3, eta_min=0)
-        # elif epoch == args.epochs*2//3:
+        elif epoch == args.epochs*2//3:
             # Manually set lr to where scheduler left off
-            # for param_group in optimizer.param_groups:
-            #     param_group['lr'] = args.lr * 0.001
-            # scheduler = ConstantLR(optimizer, factor=1, total_iters=args.epochs//3)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = args.lr * 1e-5
+            scheduler = ConstantLR(optimizer, factor=1, total_iters=args.epochs//3)
         else:
             scheduler.step()
         
@@ -472,16 +475,16 @@ if __name__ == "__main__":
 
     # Save directory
     parser.add_argument("--start_count",   type=int,   default=0,       help="Starting count for model directory naming")
-    parser.add_argument("--save_dir",     type=str,   default="classification/_2_train/runs_mmf", help="Save directory")
+    parser.add_argument("--save_dir",     type=str,   default="classification/_2_train/runs_mmfv1", help="Save directory")
 
     # Resume directory: resume_path or None
-    resume_path = "classification/_2_train/runs_mmf/29/checkpoint_epoch_475.pth"
+    resume_path = "classification/_2_train/runs_mmf/34/checkpoint_epoch_158.pth"
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
 
     # Training parameters
     parser.add_argument("--batch_size", type=int, default=1024)
     parser.add_argument("--epochs", type=int, default=1200)
-    parser.add_argument("--lr", type=float, default=4e-3) # higher lr for mmf
+    parser.add_argument("--lr", type=float, default=3e-3) # higher lr for mmf
     parser.add_argument("--wd", type=float, default=0) # lower for mmf
     args = parser.parse_args()
     main(args)

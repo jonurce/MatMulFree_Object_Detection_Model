@@ -82,6 +82,42 @@ class MMFLinear(nn.Module):
 
 
 
+################ MMF Linear Layer Without Backward Quantization ################
+class MMFLinearv1(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        # X [M,N] * W.t() [N,K] = O [M,K]
+        self.weight = nn.Parameter(torch.randn(out_features, in_features)) # [K, N]
+        self.bias = nn.Parameter(torch.zeros(out_features)) # [K]
+
+    def forward(self, x):
+         # Step 2. On chip: Y_tilde, mu, var, r <- rms_norm_fwd(X)
+        mu   = x.mean(dim=-1, keepdim=True)             # [M, 1]
+        var  = x.var(dim=-1, keepdim=True, unbiased=False) # [M, 1]
+        r    = 1.0 / (var + 1e-8).sqrt()                 # [M, 1]
+
+        y_norm = r * (x - mu)                           # [M, N]
+
+        # Inside Step 2: activation_quant
+        s_act  = 127.0 / y_norm.abs().max(dim=-1, keepdim=True).values.clamp(min=1e-8)  # [M, 1]
+        y_tilde = (s_act * y_norm).round().clamp(-128, 127) / s_act     # [M, N]
+
+        # Step 3: On chip: W_tilde <- weight_quant(W)
+        W = self.weight
+        s_w     = 1.0 / W.abs().mean().clamp(min=1e-8) # scalar
+        
+        # w_tilde [K, N] -> ternary: {-mean(|W|), 0, +mean(|W|)} = {-1/s_w, 0, +1/s_w}
+        # w_tilde = (s_w * W).round().clamp(-1, 1) / s_w # no gradient flows through round/clamp
+        w_tilde = W - (W - (s_w * W).round().clamp(-1, 1) / s_w).detach() # STE allows gradient to flow through to W
+
+        # Step 4: On chip: O <- Y_tilde ⊛ W_tilde + b
+        O = y_tilde @ w_tilde.t() + self.bias    # [M, K] <- [M, N] @ [N, K] + [K]
+
+        return O # [M, K]
+
+
+
+
 
 
 ################ MMF Conv2d Function ################
@@ -197,6 +233,103 @@ class MMFConv2d(nn.Module):
     def forward(self, x):
         return MMFConv2dFunction.apply(x, self.weight, self.bias, self.stride, self.padding)
 
+################ MMF Conv2d Residual Layer ################
+class MMFConv2dRes(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+        super().__init__()
+        
+        # X [B, C_in, H_in, W_in] conv W [C_out, C_in, kH, kW] = O [B, C_out, H_out, W_out]
+
+        # Weights: [C_out, C_in, kH, kW]
+        self.weight  = nn.Parameter(torch.randn(out_channels, in_channels, kernel_size, kernel_size)) 
+
+        # Bias [C_out]
+        self.bias    = nn.Parameter(torch.zeros(out_channels))
+
+        # Stride and padding (scalars)
+        self.stride = stride
+        self.padding = padding
+
+        # Residual projection: needed when input and output shapes differ
+        # If in_channels == out_channels and stride == 1: identity (no projection needed)
+        # If shapes differ: 1x1 conv to match channels and spatial size
+        if in_channels != out_channels or stride != 1:
+            self.projection = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, bias=False)
+        else:
+            self.projection = None  # identity skip — x passes through unchanged
+
+    def forward(self, x):
+    
+        # MMF path: full ternary conv
+        mmf_out = MMFConv2dFunction.apply(x, self.weight, self.bias, self.stride, self.padding)
+
+        # Skip path: identity or projection to match shape
+        if self.projection is not None:
+            skip = self.projection(x)   # [B, C_out, H_out, W_out]
+        else:
+            skip = x  # [B, C_in, H_in, W_in] = [B, C_out, H_out, W_out]
+
+        # Residual connection: F(x) + x
+        return mmf_out + skip
+
+
+
+
+
+
+
+################ MMF Conv2d Layer Without Backward Quantization ################
+class MMFConv2dv1(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+        super().__init__()
+        
+        # X [B, C_in, H_in, W_in] conv W [C_out, C_in, kH, kW] = O [B, C_out, H_out, W_out]
+
+        # Weights: [C_out, C_in, kH, kW]
+        self.weight  = nn.Parameter(torch.randn(out_channels, in_channels, kernel_size, kernel_size)) 
+
+        # Bias [C_out]
+        self.bias    = nn.Parameter(torch.zeros(out_channels))
+
+        # Stride and padding (scalars)
+        self.stride = stride
+        self.padding = padding
+
+    def forward(self, x):
+        # Before nothing, get shapes
+        B, C_in, H_in, W_in = x.shape
+
+        # Normalize over C_in per spatial position — reshape to [B*H_in*W_in, C_in]
+        # so that dim=-1 normalization operates over C_in exactly as in Linear
+        x_flat = x.permute(0, 2, 3, 1).reshape(-1, C_in)  # [M, C_in] where M=B*H_in*W_in
+
+        ### Step 2. On chip: Y_tilde, mu, var, r <- rms_norm_fwd(x)
+        mu   = x_flat.mean(dim=-1, keepdim=True)             # [M, 1]
+        var  = x_flat.var(dim=-1, keepdim=True, unbiased=False) # [M, 1]
+        r    = 1.0 / (var + 1e-8).sqrt()                 # [M, 1]
+
+        y_norm = r * (x_flat - mu)                           # [M, C_in]
+
+        # Inside Step 2: activation_quant
+        s_act  = 127.0 / y_norm.abs().max(dim=-1, keepdim=True).values.clamp(min=1e-8)  # [M, 1]
+        y_tilde = (s_act * y_norm).round().clamp(-128, 127) / s_act     # [M, C_in]
+
+        # Reshape y_tilde back to [B, C_in, H_in, W_in] for conv2d
+        y_tilde_4d = y_tilde.reshape(B, H_in, W_in, C_in).permute(0, 3, 1, 2)  # [B, C_in, H_in, W_in]
+
+
+        ### Step 3: On chip: W_tilde <- weight_quant(W)
+        W = self.weight
+        s_w     = 1.0 / W.abs().mean().clamp(min=1e-8) # scalar
+        
+        # w_tilde [C_out, C_in, kH, kW] -> ternary: {-mean(|W|), 0, +mean(|W|)} = {-1/s_w, 0, +1/s_w}
+        # w_tilde = (s_w * W).round().clamp(-1, 1) / s_w # no gradient flows through round/clamp
+        w_tilde = W - (W - (s_w * W).round().clamp(-1, 1) / s_w).detach() # STE allows gradient to flow through to W
+
+        ### Step 4: On chip: O <- Y_tilde ⊛ W_tilde + b
+        O = F.conv2d(y_tilde_4d, w_tilde, self.bias, self.stride, self.padding)  # [B, C_out, H_out, W_out]
+
+        return O # [B, C_out, H_out, W_out]
 
 
 
@@ -208,7 +341,7 @@ class MMFConv2d(nn.Module):
 if __name__ == "__main__":
     print("Testing MMFLinear...")
     x = torch.randn(32, 128, device="cuda")  # batch 32, dim 128
-    lin_mmf = MMFLinear(128, 64).cuda()
+    lin_mmf = MMFLinearv1(128, 64).cuda()
     out_mmf = lin_mmf(x)
     print("MMF output shape:", out_mmf.shape) # [32, 64]
 
@@ -216,15 +349,15 @@ if __name__ == "__main__":
 
     print("Testing MMFConv2d...")
     x = torch.randn(16, 3, 32, 32, device="cuda", requires_grad=True)  # batch 16, 3 channels, 32×32
-    conv_mmf = MMFConv2d(3, 64, kernel_size=3, stride=1, padding=1).cuda()
+    conv_mmf = MMFConv2dv1(3, 64, kernel_size=3, stride=1, padding=1).cuda()
     out_mmf = conv_mmf(x)
     print("MMF output shape:", out_mmf.shape)  # [16, 64, 32, 32]
 
     print("\n") 
 
     print("Testing MMFConv2d gradients...")
-    layer = MMFConv2d(3, 64, kernel_size=3, padding=1).cuda()
-    fc = nn.Linear(64, 10).cuda()
+    layer = MMFConv2dv1(3, 64, kernel_size=3, padding=1).cuda()
+    fc = MMFLinearv1(64, 10).cuda()
     x = torch.randn(4, 3, 32, 32, device='cuda', requires_grad=True)
     labels = torch.randint(0, 10, (4,), device='cuda')
     out = layer(x)           # [4, 64, 32, 32]

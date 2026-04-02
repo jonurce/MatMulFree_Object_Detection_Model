@@ -52,6 +52,20 @@ def train_one_epoch(model, epoch, writer, loader, optimizer, scheduler, criterio
         
         # Backward and step with gradient clipping (uses scaler for this) 
         scaler.scale(loss).backward()
+
+        # Log gradients to TensorBoard
+        global_step = epoch * num_batches + batch_idx
+        layer_idx = 0
+        for name, p in model.named_parameters():
+            if 'weight' in name and p.grad is not None:
+                grad_mean = p.grad.abs().mean().item()
+                grad_max = p.grad.abs().max().item()
+
+                writer.add_scalar(f"Gradients/mean_abs/layer_{layer_idx:02d}", grad_mean, global_step)
+                writer.add_scalar(f"Gradients/max_abs/layer_{layer_idx:02d}", grad_max, global_step)
+
+                layer_idx += 1
+
         scaler.unscale_(optimizer)  # important before clip
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
         scaler.step(optimizer)
@@ -70,7 +84,6 @@ def train_one_epoch(model, epoch, writer, loader, optimizer, scheduler, criterio
         total_samples += total
 
         # TensorBoard batch logging
-        global_step = epoch * num_batches + batch_idx
         writer.add_scalar("Train/batch/loss", loss.item(), global_step)
         writer.add_scalar("Train/batch/accuracy", correct / total, global_step)
 
@@ -403,7 +416,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train YOLOv1-style Classifier on CIFAR-10")
 
     # Save directory
-    parser.add_argument("--start_count",   type=int,   default=23,       help="Starting count for model directory naming")
+    parser.add_argument("--start_count",   type=int,   default=46,       help="Starting count for model directory naming")
     parser.add_argument("--save_dir",     type=str,   default="classification/_2_train/runs", help="Save directory")
 
     # Resume directory: resume_path or None
