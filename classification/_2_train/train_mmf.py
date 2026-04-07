@@ -17,7 +17,7 @@ from torch.amp import GradScaler, autocast
 scaler = GradScaler()
 
 from classification._1_dataset.dataset import CIFAR10Dataset
-from model import YOLOv1ClassifierMMF, YOLOv1ClassifierMMFv1, YOLOv1ClassifierMMFv2, YOLOv1ClassifierMMFv3
+from model import YOLOv1ClassifierMMF, YOLOv1ClassifierMMFv1, YOLOv1ClassifierMMFv2, YOLOv1ClassifierMMFv3, YOLOv1ClassifierMMFv4, YOLOv1ClassifierMMFv5
 
 GLOBAL_LAST_EPOCH = 0
 GLOBAL_BEST_VAL_LOSS = float('inf')
@@ -208,6 +208,12 @@ def main(args):
         model = YOLOv1ClassifierMMFv2(num_classes=10, channel_factor=args.channel_factor).to(device)
     elif (args.mmf_version == 3):
         model = YOLOv1ClassifierMMFv3(num_classes=10).to(device)
+    elif (args.mmf_version == 4):
+        model = YOLOv1ClassifierMMFv4(num_classes=10).to(device)
+    elif (args.mmf_version == 5):
+        model = YOLOv1ClassifierMMFv5(num_classes=10, weight_init_scale=args.weight_init_scale).to(device)
+    else:
+        raise ValueError(f"Invalid MMF version: {args.mmf_version}")
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -488,15 +494,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train YOLOv1-style Classifier on CIFAR-10")
 
     # Model parameters
-    parser.add_argument("--mmf_version",     type=int,   default=3, help="MMF version to use")
+    parser.add_argument("--mmf_version",     type=int,   default=5, help="MMF version to use")
     parser.add_argument("--channel_factor",     type=float,   default=1, help="Channel factor for MMF layers (only for v2)")
+    parser.add_argument("--weight_init_scale", type=float,   default=0.1, help="Weight initialization scale for MMF layers (only for v5)")
 
     # Save directory
     parser.add_argument("--start_count",   type=int,   default=0,       help="Starting count for model directory naming")
-    parser.add_argument("--save_dir",     type=str,   default="classification/_2_train/runs_mmfv3", help="Save directory")
+    parser.add_argument("--save_dir",     type=str,   default="classification/_2_train/runs_mmfv5", help="Save directory")
 
     # Resume directory: resume_path or None
-    resume_path = "classification/_2_train/runs_mmfv3/1/checkpoint_epoch_618.pth"
+    resume_path = "classification/_2_train/runs_mmfv5/5/checkpoint_epoch_362.pth"
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
 
     # Training parameters

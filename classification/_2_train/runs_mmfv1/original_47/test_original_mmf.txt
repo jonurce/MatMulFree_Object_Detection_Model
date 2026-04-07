@@ -1,0 +1,10 @@
+Test Results for Original Model, using MMF on inference
+Model: classification/_2_train/runs_mmfv1/original_47/best_model.pth
+-------------------------
+Original Model Results:
+Train Loss: 0.809032 Acc: 0.719580
+Val Loss: 0.461106 Acc: 0.847200
+-------------------------
+Original Model with MMF on inference:
+Train Loss: 3.387725 Acc: 0.100000
+Val Loss: 3.388130 Acc: 0.100000

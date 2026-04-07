@@ -10,7 +10,7 @@ import os
 import argparse
 
 from classification._1_dataset.dataset import CIFAR10Dataset
-from model import YOLOv1ClassifierMMF, YOLOv1ClassifierMMFv1  
+from model import YOLOv1Classifier, YOLOv1ClassifierMMF, YOLOv1ClassifierMMFv1  
 
 ##################### Validate #####################
 def validate(model, loader, criterion, device):
@@ -44,7 +44,8 @@ def main(args):
     print(f"Using device: {device}")
 
     # Model
-    model = YOLOv1ClassifierMMF(num_classes=10).to(device)
+    model_original = YOLOv1Classifier(num_classes=10).to(device)
+    model_mmf = YOLOv1ClassifierMMF(num_classes=10).to(device)
 
     # Load model
     best_model = torch.load(args.model_path, map_location=device)
@@ -62,12 +63,14 @@ def main(args):
             new_k = k.replace("module.", "")
         cleaned_state[new_k] = v
 
-    model.load_state_dict(cleaned_state)
+    model_original.load_state_dict(cleaned_state)
+    model_mmf.load_state_dict(cleaned_state)
 
     # Multi-GPU
     if torch.cuda.device_count() > 1:
         print(f"Using {torch.cuda.device_count()} GPUs with DataParallel")
-        model = nn.DataParallel(model)
+        model_original = nn.DataParallel(model_original)
+        model_mmf = nn.DataParallel(model_mmf)
 
     # Datasets
     train_ds = CIFAR10Dataset(split='train')
@@ -81,25 +84,37 @@ def main(args):
     criterion = nn.CrossEntropyLoss()
 
     # Validate best model
-    train_loss, train_acc = validate(model, train_loader, criterion, device)
-    val_loss, val_acc = validate(model, val_loader, criterion, device)
+    train_loss_original, train_acc_original = validate(model_original, train_loader, criterion, device)
+    val_loss_original, val_acc_original = validate(model_original, val_loader, criterion, device)
+    train_loss_mmf, train_acc_mmf = validate(model_mmf, train_loader, criterion, device)
+    val_loss_mmf, val_acc_mmf = validate(model_mmf, val_loader, criterion, device)
+
 
     # Print final results
     print(f"Test Results for Original Model, using MMF on inference")
-    print(f"Model: {args.model_path}")
-    print(f"Train Loss: {train_loss:.4f} Acc: {train_acc:.4f}")
-    print(f"Val Loss: {val_loss:.4f} Acc: {val_acc:.4f}")
+    print(f"Model: {args.model_path}\n")
+    print(f"Original Model:")
+    print(f"Train Loss: {train_loss_original:.4f} Acc: {train_acc_original:.4f}")
+    print(f"Val Loss: {val_loss_original:.4f} Acc: {val_acc_original:.4f}")
+    print(f"--------------------:")
+    print(f"Original model made MMF on inference:")
+    print(f"Train Loss: {train_loss_mmf:.4f} Acc: {train_acc_mmf:.4f}")
+    print(f"Val Loss: {val_loss_mmf:.4f} Acc: {val_acc_mmf:.4f}")
 
     # Save final results to details.txt
     model_dir = os.path.dirname(args.model_path)  # .../runs/5/
-    test_path = os.path.join(model_dir, "test_results.txt")
+    test_path = os.path.join(model_dir, "test_original_mmf.txt")
     with open(os.path.join(test_path), "w") as f:
         f.write(f"Test Results for Original Model, using MMF on inference\n")
         f.write(f"Model: {args.model_path}\n")
         f.write(f"-------------------------\n")
-        f.write(f"Test Results:\n")
-        f.write(f"Train Loss: {train_loss:.6f} Acc: {train_acc:.6f}\n")
-        f.write(f"Val Loss: {val_loss:.6f} Acc: {val_acc:.6f}\n")
+        f.write(f"Original Model Results:\n")
+        f.write(f"Train Loss: {train_loss_original:.6f} Acc: {train_acc_original:.6f}\n")
+        f.write(f"Val Loss: {val_loss_original:.6f} Acc: {val_acc_original:.6f}\n")
+        f.write(f"-------------------------\n")
+        f.write(f"Original Model with MMF on inference:\n")
+        f.write(f"Train Loss: {train_loss_mmf:.6f} Acc: {train_acc_mmf:.6f}\n")
+        f.write(f"Val Loss: {val_loss_mmf:.6f} Acc: {val_acc_mmf:.6f}\n")
 
 
 
