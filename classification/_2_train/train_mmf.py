@@ -17,7 +17,7 @@ from torch.amp import GradScaler, autocast
 scaler = GradScaler()
 
 from classification._1_dataset.dataset import CIFAR10Dataset
-from model import YOLOv1ClassifierMMF, YOLOv1ClassifierMMFv1, YOLOv1ClassifierMMFv2, YOLOv1ClassifierMMFv3, YOLOv1ClassifierMMFv4, YOLOv1ClassifierMMFv5, YOLOv1ClassifierMMFv6
+from model import YOLOv1ClassifierMMF, YOLOv1ClassifierMMFv1, YOLOv1ClassifierMMFv2, YOLOv1ClassifierMMFv3, YOLOv1ClassifierMMFv4, YOLOv1ClassifierMMFv5, YOLOv1ClassifierMMFv6, YOLOv1ClassifierMMFv7
 
 GLOBAL_LAST_EPOCH = 0
 GLOBAL_BEST_VAL_LOSS = float('inf')
@@ -145,6 +145,9 @@ def save_on_interrupt():
                 'epochs': args.epochs,
                 'lr': args.lr,
                 'wd': args.wd,
+                'mmf_version': args.mmf_version,
+                'weight_init_scale': args.weight_init_scale,
+                'quantization_levels': args.quantization_levels
             }
         }, interrupt_path)
         print(f"Saved interrupted model: {interrupt_path}")
@@ -218,6 +221,8 @@ def main(args):
         model = YOLOv1ClassifierMMFv5(num_classes=10, weight_init_scale=args.weight_init_scale).to(device)
     elif (args.mmf_version == 6):
         model = YOLOv1ClassifierMMFv6(num_classes=10, weight_init_scale=args.weight_init_scale).to(device)
+    elif (args.mmf_version == 7):
+        model = YOLOv1ClassifierMMFv7(num_classes=10, weight_init_scale=args.weight_init_scale, quantization_levels=args.quantization_levels).to(device)
     else:
         raise ValueError(f"Invalid MMF version: {args.mmf_version}")
 
@@ -266,6 +271,14 @@ def main(args):
             f.write(f"Learning rate:   {args.lr}\n")
             f.write(f"Weight decay:   {args.wd}\n")
             f.write(f"Device:          x{torch.cuda.device_count()} {torch.cuda.get_device_name(0)}\n")
+            f.write(f"-------------------------\n")
+            f.write(f"MMF Version: {args.mmf_version}\n")
+            if args.mmf_version == 2:
+                f.write(f"Channel Factor: {args.channel_factor}\n")
+            if args.mmf_version in [5, 6, 7]:
+                f.write(f"Weight Init Scale: {args.weight_init_scale}\n")
+            if args.mmf_version == 7:
+                f.write(f"Quantization Levels: {args.quantization_levels}\n")
 
         # TensorBoard
         writer = SummaryWriter(log_dir=GLOBAL_MODEL_DIR)
@@ -452,6 +465,9 @@ def main(args):
                     'epochs': args.epochs,
                     'lr': args.lr,
                     'wd': args.wd,
+                    'mmf_version': args.mmf_version,
+                    'weight_init_scale': args.weight_init_scale,
+                    'quantization_levels': args.quantization_levels
                 }
             }, os.path.join(GLOBAL_MODEL_DIR, "best_model.pth"))
             print(f"→ Improved! Saved best model (val_loss: {val_loss:.6f})")
@@ -475,6 +491,9 @@ def main(args):
                 'epochs': args.epochs,
                 'lr': args.lr,
                 'wd': args.wd,
+                'mmf_version': args.mmf_version,
+                'weight_init_scale': args.weight_init_scale,
+                'quantization_levels': args.quantization_levels
             }
         }, os.path.join(GLOBAL_MODEL_DIR, f"checkpoint_epoch_{epoch}.pth"))
         prev_path = os.path.join(GLOBAL_MODEL_DIR, f"checkpoint_epoch_{epoch - 1}.pth")
@@ -500,17 +519,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train YOLOv1-style Classifier on CIFAR-10")
 
     # Model parameters
-    parser.add_argument("--mmf_version",     type=int,   default=6, help="MMF version to use")
+    parser.add_argument("--mmf_version",     type=int,   default=7, help="MMF version to use")
     parser.add_argument("--channel_factor",     type=float,   default=1, help="Channel factor for MMF layers (only for v2)")
-    parser.add_argument("--weight_init_scale", type=float,   default=0.2, help="Weight initialization scale for MMF layers (only for v5 and v6)")
+    parser.add_argument("--weight_init_scale", type=float,   default=0.5, help="Weight initialization scale for MMF layers (only for v5, v6, v7)")
+    parser.add_argument("--quantization_levels", type=int, default=5, help="Number of quantization levels for MMF (only for v7)")
 
     # Save directory
     parser.add_argument("--start_count",   type=int,   default=0,       help="Starting count for model directory naming")
-    parser.add_argument("--save_dir",     type=str,   default="classification/_2_train/runs_mmfv6", help="Save directory")
+    parser.add_argument("--save_dir",     type=str,   default="classification/_2_train/runs_mmfv7", help="Save directory")
 
     # Resume directory: resume_path or None
-    resume_path = "classification/_2_train/runs_mmfv6/0/checkpoint_epoch_230.pth"
-    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
+    resume_path = "classification/_2_train/runs_mmfv7/2/checkpoint_epoch_441.pth"
+    parser.add_argument("--resume", type=str, default=resume_path, help="Path to checkpoint to resume from")
 
     # Training parameters
     parser.add_argument("--batch_size", type=int, default=1024)
