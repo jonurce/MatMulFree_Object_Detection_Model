@@ -1,5 +1,6 @@
 _downloads/
 _dataset/
+_old_code/
 venv/
 __pycache__/
 *.pth
