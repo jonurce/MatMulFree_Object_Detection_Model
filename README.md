@@ -116,7 +116,7 @@ rm -rf _downloads
 
 ## Repository Structure
 
-"""
+```
 MatMulFree_Image_Classification_Model/
 │
 ├── _dataset/                      # Dataset folder (created during setup)
@@ -150,7 +150,7 @@ MatMulFree_Image_Classification_Model/
 ├── requirements.txt               # Python dependencies
 ├── README.md                      # Project documentation
 └── LICENSE                        # MIT License
-"""
+```
 
 ---
 
