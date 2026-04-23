@@ -116,15 +116,39 @@ rm -rf _downloads
 
 ## Repository Structure
 
-...
-
-### Key Components
-
-- **`models/`**: Contains the implementation of matrix multiplication-free neural network architectures
-- **`utils/`**: Helper functions for data loading, preprocessing, and evaluation
-- **`train.py`**: Main training loop with checkpointing and logging
-- **`evaluate.py`**: Model evaluation on test set
-- **`config.py`**: Centralized configuration for hyperparameters and paths
+MatMulFree_Image_Classification_Model/
+│
+├── _dataset/                      # Dataset folder (created during setup)
+│   └── cifar10/                   # CIFAR-10 extracted files
+│       └── cifar-10-batches-py/   # Training and test batches
+│
+├── models/                        # Neural network architectures
+│   ├── baseline_model.py          # Standard Conv2d baseline model
+│   └── mmf_model.py               # MatMul-Free model with ternary quantization
+│
+├── layers/                        # Custom layer implementations
+│   ├── mmf_conv2d.py             # MatMul-Free convolutional layer
+│   ├── mmf_linear.py             # MatMul-Free fully-connected layer
+│   └── quantization.py           # Ternary weight and activation quantization
+│
+├── utils/                         # Utility functions and helpers
+│   ├── data_loader.py            # CIFAR-10 dataset loading and preprocessing
+│   ├── metrics.py                # Accuracy, loss, and evaluation metrics
+│   ├── visualization.py          # Training curves and result plotting
+│   └── checkpoint.py             # Model saving and loading
+│
+├── experiments/                   # Experiment configurations and results
+│   ├── configs/                  # Hyperparameter configurations (YAML/JSON)
+│   ├── logs/                     # Training logs and tensorboard files
+│   └── results/                  # Saved models and performance summaries
+│
+├── train.py                       # Main training script
+├── evaluate.py                    # Model evaluation on test set
+├── inference.py                   # Single image inference script
+├── config.py                      # Global configuration and hyperparameters
+├── requirements.txt               # Python dependencies
+├── README.md                      # Project documentation
+└── LICENSE                        # MIT License
 
 ---
 
